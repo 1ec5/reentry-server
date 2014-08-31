@@ -15,9 +15,7 @@ Getting started couldn’t be simpler:
 
 1. [Download and install Node.js](http://nodejs.org). Free and paid Node.js hosting is available from [a number of providers](https://github.com/joyent/node/wiki/Node-Hosting).
 1. [Download and unzip Reentry Server](https://github.com/1ec5/reentry-server/downloads).
-1. Execute the following command on the command line: ```
-node /path/to/server.js
-```
+1. Execute the following command on the command line: `node /path/to/server.js`
 
 Credit
 ------

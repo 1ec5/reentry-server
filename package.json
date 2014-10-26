@@ -1,0 +1,23 @@
+{
+	"name": "reentry-server",
+	"description": "modern Atmosphere YACP server",
+	"version": "0.1.0",
+	"keywords": ["yacp", "atmosphere", "atmo", "3d", "virtual reality", "chat"],
+	"homepage": "https://github.com/1ec5/reentry-server/",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/1ec5/reentry-server/"
+	},
+	"main": "./server.js",
+	"author": "Minh Nguyen <mxn@1ec5.org>",
+	"maintainers": [
+		{
+			"name": "Minh Nguyen",
+			"email": "mxn@1ec5.org",
+			"web": "http://www.1ec5.org/"
+		}
+	],
+	"devDependencies": {
+		"bufferpack": ">=0.0.5"
+	}
+}

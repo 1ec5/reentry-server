@@ -4,13 +4,13 @@ const net = require("net");
 const os = require("os");
 const stream = require("stream");
 
-const bufferpack = require("bufferpack/bufferpack.js");
+const bufferpack = require("bufferpack");
 
-const config = require("config.js");
-const limits = require("limits.js");
-const types = require("types.js");
+const config = require("config");
+const limits = require("limits");
+const types = require("types");
 
-const world = require("world.js");
+const world = require("world");
 
 String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());

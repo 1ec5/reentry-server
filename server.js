@@ -6,11 +6,14 @@ const stream = require("stream");
 
 const bufferpack = require("bufferpack");
 
+require("es6-shim");
+
 const config = require("config");
 const limits = require("limits");
 const types = require("types");
 
 const world = require("world");
+const objectobserver = require("objectobserver");
 
 String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());
@@ -425,6 +428,22 @@ server.on("connection", function (socket) {
 			}
 			else throw exc;
 		}
+	});
+	
+	/**
+	 * @see lsRemoteClient_ObPosition() in lsRemoteClient.c
+	 */
+	socket.on("ObPosition1", function (position) {
+		var obj = this.objects.find(function (obj, idx, arr) {
+			return obj.id === position.oid;
+		});
+		if (!obj) {
+			die(types.errors.objectPosition, position.oid,
+				"Attempted to set the position of an object you do not own.");
+		}
+		obj.position = [position.pos.slice(0, 3), position.pos.slice(3, 6)];
+		obj.markAsDirty(objectobserver.dirtyAttrsPosition);
+		// TODO: broadcast
 	});
 	
 	// Announce the client's presence to the sysop.

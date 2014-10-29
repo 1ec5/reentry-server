@@ -19,6 +19,10 @@ String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());
 };
 
+net.Socket.prototype.BROADCAST_MODE_NONE = 0
+net.Socket.prototype.BROADCAST_MODE_WORLD = 1
+net.Socket.prototype.BROADCAST_MODE_UNIVERSE = 2
+
 // Greet the user.
 console.log(config.productName + " " + config.productVersion.join("."));
 console.log(config.protocolName + " " + config.protocolVersion.join("."));
@@ -130,6 +134,9 @@ server.on("connection", function (socket) {
 	socket.cipherOutKey = config.cipherSeed;
 	
 	socket.isDummy = false;
+	
+	//* @see lsRemoteClientStruct.broadcast in RemoteClient.h
+	socket.broadcastMode = socket.BROADCAST_MODE_NONE;
 	
 	//* @see lsRemoteClientStruct.obs in RemoteClient.h
 	socket.objects = [];
@@ -443,7 +450,17 @@ server.on("connection", function (socket) {
 		}
 		obj.position = [position.pos.slice(0, 3), position.pos.slice(3, 6)];
 		obj.markAsDirty(objectobserver.dirtyAttrsPosition);
-		// TODO: broadcast
+		if (this.broadcastMode) {
+			// BroadcastPosition() in lsWorld.c
+			this.send(new types.Broadcast1({
+				clientIdent: obj.proxy.clientIdent,
+				worldName: obj.worldInstance.world.worldName,
+				info: "POS: " + position.pos.map(function (elt, idx, arr) {
+					return elt.toFixed(16);
+				}).join(" "),
+				oid: position.oid,
+			}));
+		}
 	});
 	
 	// Announce the client's presence to the sysop.

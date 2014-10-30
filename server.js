@@ -23,16 +23,30 @@ net.Socket.prototype.BROADCAST_MODE_NONE = 0
 net.Socket.prototype.BROADCAST_MODE_WORLD = 1
 net.Socket.prototype.BROADCAST_MODE_UNIVERSE = 2
 
+var version = config.productName + " " + config.productVersion.join(".");
+version += "\n" + config.protocolName + " " + config.protocolVersion.join(".");
+
+// Main() in lsMain.c, lscClient.c
+var program = require("commander");
+program.version(version)
+	.option("--port <port>", "port to listen [5555]", 5555)	// portNo
+	
+	.option("--master-port <port>", "port for master server to listen [5550]", 5550)	// mportNo
+	.option("--master-alt-port <port>", "alternate port for master server to listen [5562]", 5562)	// mportNo2
+	
+	.option("--refresh <rate>", "maximum refresh rate in hertz [10]", 10)	// cycleTime
+	
+	.parse(process.argv);
+
 // Greet the user.
-console.log(config.productName + " " + config.productVersion.join("."));
-console.log(config.protocolName + " " + config.protocolVersion.join("."));
+console.log(version);
 //console.log("Based on " + config.predecessorName + " " +
 //			config.predecessorVersion.join("."));
 console.log();
 
 // Listen for connections.
 var server = net.createServer();
-server.listen(config.port, function () {
+server.listen(program.port, function () {
 	var addrDesc;
 	var addr = server.address();
 	if (addr.address == "127.0.0.1") addr.address = "localhost";
@@ -93,6 +107,9 @@ server._nextId = 0;
 //	start: 0,
 //	length: 0,
 //};
+
+//* @see lsServerStruct.cycleDelay in lsServer_.h
+server.refreshRate = program.refresh ? (1.0 / program.refresh) : 0.;
 
 /**
  * @see lsServerGenId() in lsServer.c

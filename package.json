@@ -15,6 +15,7 @@
 	"bin": "./server.js",
 	"dependencies": {
 		"bufferpack": "ryanrolds/bufferpack",
+		"commander": "tj/commander.js",
 		"es6-shim": "paulmillr/es6-shim"
 	},
 	"preferGlobal": true

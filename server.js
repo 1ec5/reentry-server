@@ -19,6 +19,10 @@ String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());
 };
 
+net.Server.prototype.DEPENDENCY_LEVEL_AUTONOMOUS = 0	// lsAutonomousMode
+net.Server.prototype.DEPENDENCY_LEVEL_SLAVE = 1			// lsSlaveMode
+net.Server.prototype.DEPENDENCY_LEVEL_MASTER = 2		// lsMasterMode
+
 net.Socket.prototype.BROADCAST_MODE_NONE = 0
 net.Socket.prototype.BROADCAST_MODE_WORLD = 1
 net.Socket.prototype.BROADCAST_MODE_UNIVERSE = 2
@@ -31,11 +35,14 @@ var program = require("commander");
 program.version(version)
 	.option("--port <port>", "port to listen [5555]", 5555)	// portNo
 	
+	.option("--master", "run as cluster master")
+	.option("--slave", "run as slave of master")
 	.option("--master-port <port>", "port for master server to listen [5550]", 5550)	// mportNo
 	.option("--master-alt-port <port>", "alternate port for master server to listen [5562]", 5562)	// mportNo2
 	
 	.option("--refresh <rate>", "maximum refresh rate in hertz [10]", 10)	// cycleTime
 	
+	.option("--debug", "extra logging and sanity checks")
 	.parse(process.argv);
 
 // Greet the user.
@@ -55,6 +62,16 @@ server.listen(program.port, function () {
 	console.log("Listening " + addrDesc + "…");
 	console.log();
 });
+
+server.dependencyLevel = server.DEPENDENCY_LEVEL_AUTONOMOUS;	// mode
+console.assert(!(program.master && program.slave),
+			   "Cannot be both master and slave.");
+if (program.master) {
+	server.dependencyLevel = server.DEPENDENCY_LEVEL_MASTER;
+}
+else if (program.slave) {
+	server.dependencyLevel = server.DEPENDENCY_LEVEL_SLAVE;
+}
 
 // Since types.LoginAck1 reports client IDs as ints, the total number of
 // connections is limited to MAX_INT. Also limit the number of concurrent
@@ -165,13 +182,20 @@ server.on("connection", function (socket) {
 	socket.observingGroups = [];
 	
 	/**
+	 * @see lsConnectionStruct.lastRecvTime in lsConnection.h
+	 * @see lsConnectionStruct.lastSendTime in lsConnection.h
+	 */
+	socket.lastReceivedTime = socket.lastSentTime = Date.now();
+	socket.timeoutTimeout = 0;
+	
+	/**
 	 * Originally intended to send an Error1 message but instead just kills the
 	 * connection.
 	 * 
 	 * @see lsConnectionKill() in lsConnection.c
 	 * @see lsSendError1() in lsConnection.c
 	 */
-	function die(type, id, msg) {
+	socket.die = function (type, id, msg) {
 		console.error("Fatal error:");
 		console.error(new types.Error1({type: type, id: id, msg: msg}));
 		//socket.end();
@@ -216,24 +240,30 @@ server.on("connection", function (socket) {
 		if (!(struct.constructor.name in types.typeIds)) {
 			die(types.errors.general, 0,
 				"Unregistered message type “" + struct.constructor.name + "”.");
-			return;
+			return false;
 		}
 		
+		var type = struct.constructor.name;
 		var packetData = struct.pack();
 		//console.log(packetData);												// debug
+		if (program.debug) {
+			console.log("Packed " + (type[0].isVowel() < 0 ? "a" : "an") +
+						" “" + type + "” message for " + remoteDesc + ":");
+			console.log(struct);
+		}
 		for (var i = 0; i < packetData.length; i++) {
 			packetData[i] = encryptByte(packetData[i]);
 		}
 		socket.write(packetData, function () {
-			socket.lastReceiveTime = new Date();
+			socket.lastSentTime = Date.now();
 			
-			var type = struct.constructor.name;
 			console.log("Sent " + (type[0].isVowel() < 0 ? "a" : "an") + " “" +
 						type + "” message to " + remoteDesc + ":");
 			console.log(struct);
 			
 			if (callback) callback();
 		});
+		return true;
 	}
 	
 	socket.on("close", function (had_error) {
@@ -272,7 +302,6 @@ server.on("connection", function (socket) {
 					"Unknown message type #" + typeId + ".");
 				return;
 			}
-			socket.lastSendTime = new Date();
 			var type = types.types[typeId];
 			console.log("Received " + (type.name[0].isVowel() < 0 ? "a" : "an") +
 						" “" + type.name + "” message from " + remoteDesc + ":");
@@ -301,8 +330,40 @@ server.on("connection", function (socket) {
 			
 			// Handle the message.
 			socket.emit(type.name, struct);
+			
+			socket.markLastReceivedTime();
 		}
 	});
+	
+	function timeOut(connectionName) {
+		socket.die(types.errors.general, 0,
+				   "Timeout due to inactivity (was connected to " +
+				   connectionName + ").");
+	}
+	
+	/**
+	 * @see lsRemoteClientUpdateOneOb() in lsRemoteClient.c
+	 */
+	socket.markLastReceivedTime = function () {
+		socket.lastReceivedTime = Date.now();
+		if (socket.isDummy || socket.userId == config.users.god.userId ||
+			socket.userId == config.users.slave.userId) {
+			return;
+		}
+		
+		var timeout = config.slaveInactivityTimeout;
+		var connectionName = "slave";
+		if (server.dependencyLevel == server.DEPENDENCY_LEVEL_MASTER) {
+			timeout = config.masterInactivityTimeout;
+			connectionName = "master";
+		}
+		if (socket.timeoutTimeout) {
+			clearTimeout(socket.timeoutTimeout);
+			delete socket.timeoutTimeout;
+		}
+		socket.timeoutTimeout = setTimeout(timeOut, timeout * 1000. /* ms/s */,
+										   connectionName);
+	};
 	
 	/**
 	 * @see case lsStartState in lsRemoteClientMsgCallback_() in lsRemoteClient.c
@@ -484,6 +545,23 @@ server.on("connection", function (socket) {
 	console.log("Connected to client #" + socket.clientId + " at " +
 				remoteDesc + ".");
 });
+
+/**
+ * @see lsServerStep() in lsServer.c
+ */
+setInterval(function () {
+	// TODO: Call lsStatSample()
+	
+	/**
+	 * @see lsRemoteClientUpdateOneOb() in lsRemoteClient.c
+	 */
+	server.sockets.forEach(function (socket, idx, sockets) {
+		if (socket.isDummy) return;
+		
+		var observer = socket.dirtyObservers.shift();
+		if (observer) observer.flushUpdates();
+	});
+}, server.refreshRate * 1000. /* ms/s */);
 
 server.on("close", function () {
 	console.log("Server closed to new connections.");

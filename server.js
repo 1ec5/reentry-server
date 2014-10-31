@@ -13,7 +13,6 @@ const limits = require("limits");
 const types = require("types");
 
 const world = require("world");
-const objectobserver = require("objectobserver");
 
 String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());
@@ -169,8 +168,15 @@ server.on("connection", function (socket) {
 	
 	socket.isDummy = false;
 	
+	socket.nextSimpleAvatarId = 1;
+	//* @see lsRemoteClientStruct.noViewpoint in RemoteClient.h
+	socket.simpleAvatars = false;
+	
 	//* @see lsRemoteClientStruct.broadcast in RemoteClient.h
 	socket.broadcastMode = socket.BROADCAST_MODE_NONE;
+	
+	//* @see lsRemoteClientStruct.ignores in RemoteClient.h
+	socket.ignoredIds = [];
 	
 	//* @see lsRemoteClientStruct.obs in RemoteClient.h
 	socket.objects = [];
@@ -207,7 +213,7 @@ server.on("connection", function (socket) {
 		socket.clientId = ++server.maxClientId;
 	}
 	catch (exc) {
-		die(types.errors.general, 0, exc);
+		socket.die(types.errors.general, 0, exc);
 		console.error("Attempting to close the server to new connections.");
 		server.close();
 		return;
@@ -238,8 +244,9 @@ server.on("connection", function (socket) {
 	 */
 	socket.send = function (struct, callback) {
 		if (!(struct.constructor.name in types.typeIds)) {
-			die(types.errors.general, 0,
-				"Unregistered message type “" + struct.constructor.name + "”.");
+			socket.die(types.errors.general, 0,
+					   "Unregistered message type “" + struct.constructor.name +
+					   "”.");
 			return false;
 		}
 		
@@ -298,8 +305,8 @@ server.on("connection", function (socket) {
 			var typeId = bufferpack.unpack(fmt, packetData, packetOffset);
 			packetOffset += bufferpack.calcLength(fmt);
 			if (!(typeId in types.types)) {
-				die(types.errors.general, typeId,
-					"Unknown message type #" + typeId + ".");
+				socket.die(types.errors.general, typeId,
+						   "Unknown message type #" + typeId + ".");
 				return;
 			}
 			var type = types.types[typeId];
@@ -315,16 +322,16 @@ server.on("connection", function (socket) {
 			// Check sanity.
 			if (struct.requiresVersion && !socket.version) {
 				// Expected a version before anything else.
-				die(types.errors.general, 0,
-					"Must first perform version negotation by sending a “" +
-					types.Version1.name + "” message.");
+				socket.die(types.errors.general, 0,
+						   "Must first perform version negotation by sending a “" +
+						   types.Version1.name + "” message.");
 				return;
 			}
 			if (struct.requiresLogin && !socket.loggedIn) {
 				// Expected a login before anything else.
-				die(types.errors.general, 0,
-					"Must first log in by sending a “" + types.Login3.name +
-					"” message.");
+				socket.die(types.errors.general, 0,
+						   "Must first log in by sending a “" + types.Login3.name +
+						   "” message.");
 				return;
 			}
 			
@@ -378,9 +385,9 @@ server.on("connection", function (socket) {
 		if (version.minVersion[0] > config.protocolVersion[0] ||
 			(version.minVersion[1] == config.protocolVersion[1] &&
 			 version.minVersion[1] > config.protocolVersion[1])) {
-			die(types.errors.general, 0,
-				version.appName + " " + prettyClientVersion + " requires " +
-				config.protocolName + " " + prettyMinProtocolVersion + "+.");
+			socket.die(types.errors.general, 0,
+					   version.appName + " " + prettyClientVersion + " requires " +
+					   config.protocolName + " " + prettyMinProtocolVersion + "+.");
 			return;
 		}
 		
@@ -389,18 +396,17 @@ server.on("connection", function (socket) {
 		if (version.version[0] < config.protocolVersion[0] ||
 			(version.version[1] == config.protocolVersion[1] &&
 			 version.version[1] < config.protocolVersion[1])) {
-			die(types.errors.general, 0,
-				version.appName + " " + prettyClientVersion + " only supports " +
-				config.protocolName + " " + prettyMaxProtocolVersion + ".");
-			die(types.errors.general, 0, msg);
+			socket.die(types.errors.general, 0,
+					   version.appName + " " + prettyClientVersion + " only supports " +
+					   config.protocolName + " " + prettyMaxProtocolVersion + ".");
 			return;
 		}
 		
 		// LiveSpace Explorer 1 apparently has some security hole severe enough
 		// that Atmo Collab Server 0.7 doesn't support the client at all.
 		if (version.appName == "LiveSpace Explorer" && version.appVersion == 1) {
-			die(types.errors.general, 0,
-				"LiveSpace Explorer 0.1 is unsupported due to a security hole.");
+			socket.die(types.errors.general, 0,
+					   "LiveSpace Explorer 0.1 is unsupported due to a security hole.");
 			return;
 		}
 		
@@ -417,15 +423,15 @@ server.on("connection", function (socket) {
 		// Require some identification.
 		if ((!login.userName && !login.userId) || !login.password ||
 			!login.clientIdent) {
-			die(types.errors.login, 0, "Underspecified login request.");
+			socket.die(types.errors.login, 0, "Underspecified login request.");
 			return;
 		}
 		
 		// Prevent banned clients from logging in.
 		if (login.clientIdent in config.bannedClientIdents) {
-			die(types.errors.login, 0,
-				"The client “" + login.clientIdent +
-				"” has been banned from this server.");
+			socket.die(types.errors.login, 0,
+					   "The client “" + login.clientIdent +
+					   "” has been banned from this server.");
 			return;
 		}
 		
@@ -445,7 +451,7 @@ server.on("connection", function (socket) {
 						  ("#" + login.userId));
 			console.error("Client “" + login.clientIdent + "” tried to log in as " +
 						  target + ".");
-			die(types.errors.login, 0, "Invalid login.");
+			socket.die(types.errors.login, 0, "Invalid login.");
 			return;
 		}
 		
@@ -479,8 +485,8 @@ server.on("connection", function (socket) {
 		
 		// Check sanity.
 		if (!objects.worldName) {
-			die(types.errors.objectCreation, objects.cookie,
-				"No world name specified when creating an object.");
+			socket.die(types.errors.objectCreation, objects.cookie,
+					   "No world name specified when creating an object.");
 			return;
 		}
 		
@@ -497,9 +503,10 @@ server.on("connection", function (socket) {
 		var world = server.getWorld(objects.worldName, objects.reference,
 									objects.pageURL);
 		if (!world) {
-			die(types.errors.objectCreation, objects.cookie,
-				"Failed to look up or create a world for " +
-				(objects.numObs == 1 ? "this object" : "these objects") + ".");
+			socket.die(types.errors.objectCreation, objects.cookie,
+					   "Failed to look up or create a world for " +
+					   (objects.numObs == 1 ? "this object" : "these objects") +
+					   ".");
 			return;
 		}
 		
@@ -509,9 +516,39 @@ server.on("connection", function (socket) {
 		}
 		catch (exc) {
 			if (typeof(exc) == "string" || exc instanceof String) {
-				die(types.errors.objectCreation, objects.cookie, exc);
+				socket.die(types.errors.objectCreation, objects.cookie, exc);
 			}
 			else throw exc;
+		}
+	});
+	
+	/**
+	 * @see lsRemoteClientFindOb() in lsRemoteClient.c
+	 */
+	socket.getObjectById = function (id) {
+		return this.objects.find(function (obj, idx, arr) {
+			return obj.id === id;
+		});
+	};
+	
+	/**
+	 * @see lsRemoteClient_ObAvatar() in lsRemoteClient.c
+	 */
+	socket.on("ObAvatar1", function (avatar) {
+		var obj = this.getObjectById(avatar.oid);
+		if (!obj) {
+			socket.die(types.errors.objectAvatar, avatar.oid,
+					   "Attempted to set the avatar of an object you do not own.");
+		}
+		obj.avatarUrl = avatar.url;
+		if (this.broadcastMode) {
+			// BroadcastAvatar() in lsWorld.c
+			this.send(new types.Broadcast1({
+				clientIdent: obj.proxy.clientIdent,
+				worldName: obj.worldInstance.world.worldName,
+				info: "AVATAR:" + avatar.url,
+				oid: position.oid,
+			}));
 		}
 	});
 	
@@ -519,15 +556,12 @@ server.on("connection", function (socket) {
 	 * @see lsRemoteClient_ObPosition() in lsRemoteClient.c
 	 */
 	socket.on("ObPosition1", function (position) {
-		var obj = this.objects.find(function (obj, idx, arr) {
-			return obj.id === position.oid;
-		});
+		var obj = this.getObjectById(position.oid);
 		if (!obj) {
-			die(types.errors.objectPosition, position.oid,
-				"Attempted to set the position of an object you do not own.");
+			socket.die(types.errors.objectPosition, position.oid,
+					   "Attempted to set the position of an object you do not own.");
 		}
 		obj.position = [position.pos.slice(0, 3), position.pos.slice(3, 6)];
-		obj.markAsDirty(objectobserver.dirtyAttrsPosition);
 		if (this.broadcastMode) {
 			// BroadcastPosition() in lsWorld.c
 			this.send(new types.Broadcast1({

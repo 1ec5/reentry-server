@@ -8,7 +8,13 @@ Years after the plug was pulled on [Atmosphere](http://www.adobe.com/products/at
 Progress
 --------
 
-At the moment, Reentry Server only supports the most basic scenario for interacting with the Atmosphere Community Server test client. To wit, a user can enter a world, move around, and change avatars. That’s it. Chat messages aren’t even implemented yet.
+At the moment, Reentry Server only supports the most basic scenarios for interacting with the Atmosphere Community Server test client:
+
+* `/goto`
+* `/avatar`
+* moving around a world
+
+That’s it. Chat messages aren’t even implemented yet.
 
 Running Reentry Server
 ----------------------

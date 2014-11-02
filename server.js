@@ -18,13 +18,13 @@ String.prototype.isVowel = function () {
 	return "aeiouy".indexOf(this[0].toLowerCase());
 };
 
-net.Server.prototype.DEPENDENCY_LEVEL_AUTONOMOUS = 0	// lsAutonomousMode
-net.Server.prototype.DEPENDENCY_LEVEL_SLAVE = 1			// lsSlaveMode
-net.Server.prototype.DEPENDENCY_LEVEL_MASTER = 2		// lsMasterMode
+net.Server.prototype.DEPENDENCY_LEVEL_AUTONOMOUS = 0;	// lsAutonomousMode
+net.Server.prototype.DEPENDENCY_LEVEL_SLAVE = 1;		// lsSlaveMode
+net.Server.prototype.DEPENDENCY_LEVEL_MASTER = 2;		// lsMasterMode
 
-net.Socket.prototype.BROADCAST_MODE_NONE = 0
-net.Socket.prototype.BROADCAST_MODE_WORLD = 1
-net.Socket.prototype.BROADCAST_MODE_UNIVERSE = 2
+net.Socket.prototype.BROADCAST_MODE_NONE = 0;
+net.Socket.prototype.BROADCAST_MODE_WORLD = 1;
+net.Socket.prototype.BROADCAST_MODE_UNIVERSE = 2;
 
 var version = config.productName + " " + config.productVersion.join(".");
 version += "\n" + config.protocolName + " " + config.protocolVersion.join(".");
@@ -117,6 +117,9 @@ server.maxClients = config.maxClients;
 // TODO: Only config.maxObjectsCreatedSimultaneously for the slave.
 server.maxObjectsPerClient = server.maxClients * config.maxObjectsCreatedSimultaneously;
 
+//* @see lsServerStruct.moderators in lsServer_.h
+server.moderators = [];
+
 server._nextId = 0;
 //server._endId = 0;
 //server._idGrant = {
@@ -198,6 +201,9 @@ server.on("connection", function (socket) {
 	socket.nextSimpleAvatarId = 1;
 	//* @see lsRemoteClientStruct.noViewpoint in RemoteClient.h
 	socket.simpleAvatars = false;
+	
+	//* @see lsRemoteClientStruct.idents in lsRemoteClient.h
+	socket.showIdents = false;
 	
 	//* @see lsRemoteClientStruct.broadcast in RemoteClient.h
 	socket.broadcastMode = socket.BROADCAST_MODE_NONE;
@@ -652,6 +658,55 @@ server.on("connection", function (socket) {
 				oid: position.oid,
 			}));
 		}
+	});
+	
+	/**
+	 * @see lsRemoteClient_ObNickname() in lsRemoteClient.c
+	 */
+	socket.on("ObNickname1", function (nickChange) {
+		var obj = this.getObjectById(nickChange.oid);
+		if (!obj) {
+			socket.die(types.errors.objectNickname, nickChange.oid,
+					   "Attempted to change the nickname of an object you do not own.");
+		}
+		// lsObSetNickname()
+		obj.nickname = nickChange.nickname;
+	});
+	
+	/**
+	 * @see FindPrivilege() in lsWorld.c
+	 */
+	socket.hasPrivilege = function (privilege) {
+		if (!this.objects.length) return false;
+		var worldName = this.objects[0].worldInstance.world.worldName;
+		if (!worldName) return false;
+		for (var i = 0; i < server.moderators.length; i++) {
+			var moderator = server.moderators[i];
+			if (socket.clientIdent === moderator.clientIdent &&
+				worldName === moderator.worldName &&
+				moderator.privileges === privilege) {
+				return true;
+			}
+		}
+		return false;
+	};
+	
+	/**
+	 * @see isModerator() in lsWorld.c
+	 */
+	Object.defineProperty(socket, "isModerator", {
+		get: function () {
+			return this.hasPrivilege("MODERATE");
+		},
+	});
+	
+	/**
+	 * @see isSquelched() in lsWorld.c
+	 */
+	Object.defineProperty(socket, "isSquelched", {
+		get: function () {
+			return this.hasPrivilege("SQUELCH");
+		},
 	});
 	
 	// Announce the client's presence to the sysop.

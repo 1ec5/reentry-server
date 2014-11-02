@@ -152,10 +152,37 @@ server.getWorld = function (worldName, worldUrl, pageUrl) {
 };
 
 /**
+ * @see DeleteClientIdAssoc() in lsRemoteClient.c
+ */
+server.dissociateClientId = function (obj) {
+	this.sockets.forEach(function (socket, idx, sockets) {
+		if (socket.userId === config.users.slave.userId) {
+			socket.send(new types.Moderator1({
+				purpose: types.moderatorPurposes.dissociation,
+				clientIdent: null,
+				worldName: null,
+				privileges: null,
+				expiration: 0,
+				oid: obj.id,
+				flags: 0,
+			}));
+		}
+	});
+};
+
+/**
  * @see SynthesizeBroadcaster() in lsWorld.c
  */
 server.broadcast = function (data) {
 	console.assert(false, "server.broadcast() not yet implemented!");
+};
+
+/**
+ * @see lsServerRemoveWorld() in lsServer.c
+ */
+server.removeWorld = function (world) {
+	delete this.worlds[world.worldUrl];
+	// TODO: Shut down the server if shutting down and last world removed.
 };
 
 server.on("connection", function (socket) {
@@ -529,6 +556,58 @@ server.on("connection", function (socket) {
 		return this.objects.find(function (obj, idx, arr) {
 			return obj.id === id;
 		});
+	};
+	
+	/**
+	 * @see lsRemoteClient_ObsDestroy() in lsRemoteClient.c
+	 */
+	socket.on("ObsDestroy1", function (destruction) {
+		if (destruction.numObs < 1 || destruction.obs.length < 1) {
+			socket.die(types.errors.objectDestruction, 0,
+					   "No objects to destroy.");
+		}
+		
+		destruction.obs.forEach(function (id, idx, ids) {
+			var obj = socket.getObjectById(id);
+			if (!obj) {
+				socket.die(types.errors.objectDestruction, id,
+						   "Cannot destroy object #" + id +
+						   " because you don’t own it.");
+			}
+			
+			server.dissociateClientId(obj);
+			obj.detach();
+		});
+	});
+	
+	/**
+	 * @see lsRemoteClient_ObGroupDelObserver() in lsRemoteClient.c
+	 */
+	socket.on("ObGroupDelObserver1", function (deletion) {
+		var observingGroup = this.observingGroups.find(function (group, idx, arr) {
+			return group.id === deletion.gid;
+		});
+		if (!observingGroup) {
+			// TODO: Log the incident.
+			socket.die(types.errors.objectGroupObserverDeletion, deletion.gid,
+					   "Attempted to stop observing a group you aren’t observing.");
+		}
+		
+		observingGroup.removeObserver(this);
+	});
+	
+	/**
+	 * @see lsRemoteClientDelObObserver() in lsRemoteClient.c
+	 */
+	socket.removeObserver = function (observer) {
+		var idx = this.observers.indexOf(observer);
+		if (idx < 0) return;	// TODO: Also log.
+		this.observers.splice(idx, 1);
+		if (observer.dirty) {
+			idx = this.dirtyObservers.indexOf(observer);
+			if (idx < 0) return;	// TODO: Also log.
+			this.dirtyObservers.splice(idx, 1);
+		}
 	};
 	
 	/**

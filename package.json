@@ -16,6 +16,7 @@
 	"dependencies": {
 		"bufferpack": "ryanrolds/bufferpack",
 		"commander": "tj/commander.js",
+		"des": "pkrumins/node-des",
 		"es6-shim": "paulmillr/es6-shim"
 	},
 	"preferGlobal": true

@@ -5,6 +5,7 @@ const os = require("os");
 const stream = require("stream");
 
 const bufferpack = require("bufferpack");
+const des = require("des");
 
 require("es6-shim");
 
@@ -92,6 +93,7 @@ Object.defineProperty(server, "maxClientId", {
 
 server.sockets = [];
 server.broadcasters = [];
+server.moderatorSockets = {};	// clientObjects
 
 //* @see lsSendVersion() in lsRemoteClient.c
 server.version = new types.Version1({
@@ -155,6 +157,19 @@ server.getWorld = function (worldName, worldUrl, pageUrl) {
 };
 
 /**
+ * @see FindObFromClientId() in lsWorld.c
+ */
+server.getObjectByClientIdent = function (clientIdent) {
+	var socket = this.sockets.find(function (socket, idx, sockets) {
+		return socket.clientIdent == clientIdent;
+	});
+	if (!socket) return null;
+	return socket.objects.find(function (obj, idx, objects) {
+		return obj.nickname;
+	});
+};
+
+/**
  * @see DeleteClientIdAssoc() in lsRemoteClient.c
  */
 server.dissociateClientId = function (obj) {
@@ -198,6 +213,7 @@ server.on("connection", function (socket) {
 	
 	socket.isDummy = false;
 	
+	//* @see lsRemoteClientStruct.nextAv in lsRemoteClient.h
 	socket.nextSimpleAvatarId = 1;
 	//* @see lsRemoteClientStruct.noViewpoint in RemoteClient.h
 	socket.simpleAvatars = false;
@@ -209,7 +225,7 @@ server.on("connection", function (socket) {
 	socket.broadcastMode = socket.BROADCAST_MODE_NONE;
 	
 	//* @see lsRemoteClientStruct.ignores in RemoteClient.h
-	socket.ignoredIds = [];
+	socket.ignoredIds = new Set();
 	
 	//* @see lsRemoteClientStruct.obs in RemoteClient.h
 	socket.objects = [];
@@ -689,6 +705,342 @@ server.on("connection", function (socket) {
 			}
 		}
 		return false;
+	};
+	
+	/**
+	 * @see lsRemoteClient_Say1() in lsRemoteClient.c
+	 */
+	socket.on("Say1", function (saying) {
+		if (saying.text.startsWith("####AdobeAppObject####")) return;
+		this.emit("Say2", saying);
+	});
+	
+	/**
+	 * @see lsRemoteClient_Say() in lsRemoteClient.c
+	 */
+	socket.on("Say2", function (saying) {
+		var speaker = this.getObjectById(saying.fromId);
+		if (!speaker) {
+			this.die(types.errors.objectSaying, saying.fromId,
+					 "Attempted to speak for an object you do not own.");
+		}
+		this.onModeratorCommand(saying);
+	});
+	
+	/**
+	 * @see lsModeratorCmd() in lsWorld.c
+	 */
+	socket.onModeratorCommand = function (saying) {
+		var appObj = this.objects.find(function (obj, idx, objects) {
+			return obj.nickname;
+		});
+		if (!appObj || !this.clientIdent) return false;
+		
+		var world = appObj.worldInstance.world;
+		
+		var response = new types.Say1({
+			fromId: appObj.worldInstance.group.id,
+			toId: appObj.id,
+			text: saying.text,
+		});
+		var respond = true;
+		
+		var match = saying.text.match(/^\/(\w+)(?:\s+(.+))?/i);
+		var cmd = match && match[1];
+		var body = match && match[2];
+		switch (cmd) {
+			case "simpleavs":
+				this.simpleAvatars = true;
+				this.nextSimpleAvatarId = 1;
+				this.observers.forEach(function (observer, idx, observers) {
+					if (observer.object.avatarUrl) {
+						observer.markAsDirty(objectobserver.dirtyAttrsAvatar);
+					}
+				}, this);
+				response.text = "You will now only see everyone as simple avatars. " +
+					"Type /nosimpleavs to turn this function off.";
+				break;
+			
+			case "nosimpleavs":
+				this.simpleAvatars = false;
+				this.observers.forEach(function (observer, idx, observers) {
+					observer.markAsDirty(objectobserver.dirtyAttrsAvatar);
+				}, this);
+				response.text = "You will now see all avatars. " +
+					"Type /simpleavs to turn this function back on.";
+				break;
+			
+			case "showid":
+				this.showIdents = true;
+				this.observers.forEach(function (observer, idx, observers) {
+					if (observer.object.nickname) {
+						observer.markAsDirty(objectobserver.dirtyAttrsNickname);
+					}
+				}, this);
+				response.text = "You will now see userID numbers in [square brackets] next to nicknames. " +
+					"Type /noshowid to turn this function off.";
+				break;
+			
+			case "noshowid":
+				this.showIdents = false;
+				this.observers.forEach(function (observer, idx, observers) {
+					observer.markAsDirty(objectobserver.dirtyAttrsNickname);
+				}, this);
+				response.text = "You will no longer see userID numbers. " +
+					"Type /showid to turn this function back on.";
+				break;
+			
+			case "reload":
+				if (appObj.nickname === "Noid") {
+					response.text = "Shiver me timbers!";
+					// TestHTTP() does nothing interesting.
+				}
+				else respond = false;
+				break;
+			
+			case "broadcast":
+				if (this.broadcastMode) {
+					response.text = "You're already in broadcast mode.\n";
+				}
+				else {
+					var ok = false;
+					if (body) {
+						var credentials = this.clientIdent + body;
+						var salt = [0, 0, 0, 0, 0, 0, 0, 0];
+						ok = !!world.broadcastPasswords.find(function (pass, idx, passwords) {
+							salt[0] = pass[0];
+							salt[1] = pass[1];
+							
+							var cipher = des.encrypt(body, salt);
+							cipher = des.encrypt(credentials, salt);
+							cipher = des.encrypt("dumbass", salt);
+							
+							return des.encrypt(body, salt) === pass ||
+								des.encrypt(credentials, salt) === pass;
+						});
+					}
+					if (ok) {
+						response.text = "Broadcast mode enabled. " +
+							"Type \"/nobroadcast\" to exit this mode.\n";
+						this.broadcastMode = this.BROADCAST_MODE_WORLD;
+						
+						var info = "POS: " + position.pos.map(function (elt, idx, arr) {
+								return elt.toFixed(16);
+							}).join(" ") + " NICK:" + appObj.nickname +
+							" AVATAR:" + appObj.avatarUrl;
+						var broadcast = new types.Broadcast1({
+							oid: appObj.id,
+							clientIdent: appObj.proxy.clientIdent,
+							worldName: world.worldName,
+							info: info,
+						});
+						// TODO: lsSendBroadcast1() and lsBroadcastMsg().
+					}
+					else response.text = "Broadcast password not recognized.";
+				}
+				break;
+			
+			//case "http":
+			//	break;
+			
+			case "nobroadcast":
+				if (this.broadcastMode === this.BROADCAST_MODE_NONE) {
+					response.text = "Not currently broadcasting.";
+				}
+				else {
+					response.text = "Broadcast mode off.";
+					// TODO: lsEndBroadcast().
+					this.broadcastMode = this.BROADCAST_MODE_NONE;
+				}
+				break;
+			
+			case "thread":
+				break;
+			
+			//case "btest":
+			//	break;
+			
+			//case "gtest":
+			//	break;
+			
+			case "moderate":
+				var ok = false;
+				if (body) {
+					var credentials = this.clientIdent + body;
+					var salt = [0, 0, 0, 0, 0, 0, 0, 0];
+					ok = !!world.passwords.find(function (pass, idx, passwords) {
+						salt[0] = pass[0];
+						salt[1] = pass[1];
+						
+						return des.encrypt(body, salt) === pass ||
+							des.encrypt(credentials, salt) === pass;
+					});
+				}
+				if (ok) {
+					var mod = new types.Moderator1({
+						purpose: types.moderatorPurposes.privilege,
+						privileges: "MODERATE",
+						clientIdent: this.clientIdent,
+						expiration: 0,
+						worldName: world.worldName,
+					});
+					response.text = "Moderator mode enabled.";
+					// TODO: lsModeratorMsg()
+					// TODO: lsSendModerator1() to master
+				}
+				else response.text = "Moderator password not recognized.";
+				break;
+			
+			case "squelch":
+				if (this.isModerator) {
+					match = body.match(/^(\d*)\D*?(\d*).*$/);
+					if (match) {
+						var expiration = match.length > 2 ? parseInt(match[1]) : 0;
+						var userId = parseInt(match.length > 2 ? match[2] : match[1]);
+						
+						var modSocket = this.moderatorSockets[userId];
+						if (modSocket) {
+							var moderator = new types.Moderator1({
+								purpose: types.moderatorPurposes.privilege,
+								clientIdent: modSocket.clientIdent,
+								worldName: world.worldName,
+								privileges: "SQUELCH",
+							});
+							// TODO: lsModeratorMsg()
+							// TODO: lsSendModerator1() to master
+							var squelchedObj =
+								server.getObjectByClientIdent(modSocket.clientIdent);
+							if (squelchedObj) {
+								response.text = squelchedObj.nickname + " (" +
+									userId + ") has been squelched.";
+							}
+							else response.text = userId + " has been squelched.";
+						}
+						else {
+							response.text = "Couldn't find ID number " +
+								userId + ".";
+						}
+					}
+					else {
+						response.text = "Usage: /squelch userID  " +
+							"Enter /showid to see userIDs along with nicknames.";
+					}
+				}
+				else {
+					response.text = "This command is only available to moderators.";
+				}
+				break;
+			
+			case "unsquelch":
+				if (this.isModerator) {
+					var userId = parseInt(body);
+					if (Number.isNaN(userId)) {
+						response.text = "Usage: /unsquelch userID  " +
+							"Enter /showid to see userIDs along with nicknames.";
+					}
+					else {
+						var modSocket = this.moderatorSockets[userId];
+						if (modSocket) {
+							var moderator = new types.Moderator1({
+								purpose: types.moderatorPurposes.privilege,
+								clientIdent: modSocket.clientIdent,
+								worldName: modSocket.objects[0].worldInstance.world.worldName,
+								privileges: "UNSQUELCH",
+							});
+							// TODO: lsModeratorMsg()
+							// TODO: lsSendModerator1() to master
+							var unsquelchedObj =
+								server.getObjectByClientIdent(modSocket.clientIdent);
+							if (unsquelchedObj) {
+								response.text = unsquelchedObj.nickname + " (" +
+									userId + ") has been unsquelched.";
+							}
+							else response.text = userId + " has been unsquelched.";
+						}
+						else {
+							response.text = "Couldn't find ID number " + userId +
+								".";
+						}
+					}
+				}
+				else {
+					response.text = "You must be a moderator in this world to use this command.";
+				}
+				break;
+			
+			case "pass":
+				var nickname = appObj.nickname;
+				var salt = [0, 0, 0, 0, 0, 0, 0, 0];
+				salt[0] = nickname[0].match(/^[A-Za-z0-9]/) ? nickname[0] : 0;
+				salt[1] = nickname[1].match(/^[A-Za-z0-9]/) ? nickname[1] : 0;
+				response.text = "Usage:  \"/pass password\" or \"/pass password useriD\". " +
+					"Type \"/showid\" to display userIDs next to nicknames.";
+				match = body.match(/^(\S+)(?:\s*?(\d+))?/);
+				if (match) {
+					var pass = match[1];
+					var userId = match.length > 2 ? parseInt[2] : NaN;
+					if (Number.isNaN(userId)) {
+						response.text = "The password is " + des.encrypt(pass, salt);
+					}
+					else {
+						var modSocket = this.moderatorSockets[userId];
+						if (modSocket) {
+							var credentials = this.clientIdent + pass;
+							response.text = "The password for " + userId +
+								" is " + des.encrypt(credentials, salt);
+						}
+						else {
+							response.text = "Can't find userID " + userId + ".";
+						}
+					}
+				}
+				break;
+			
+			case "ignore":
+				var userId = parseInt(body);
+				if (Number.isNaN(userId)) {
+					response.text = "Usage: /ignore userID   " +
+						"To see userIDs listed with nicknames type /showids.";
+				}
+				else {
+					var modSocket = this.moderatorSockets[userId];
+					if (modSocket) {
+						this.ignoredIds.add(modSocket.clientIdent);
+						var dirtyObserver = this.observers.find(function (observer, idx, observers) {
+							return this.object.id === userId;
+						});
+						if (dirtyObserver) {
+							dirtyObserver.markAsDirty(objectobserver.dirtyAttrsAvatar);
+							dirtyObserver.markAsDirty(objectobserver.dirtyAttrsNickname);
+						}
+						var ignoredSocket = server.getObjectByClientIdent(modSocket.clientIdent);
+						if (ignoredSocket && ignoredSocket.nickname) {
+							response.text = ignoredSocket.nickname + " (" +
+								userId + ") has been ignored.";
+						}
+						else {
+							response.text = "userID " + userId + " has been ignored.";
+						}
+					}
+					else {
+						response.text = "Couldn't find userID " + userId +
+							".Type /showid to see userIDs listed along with nicknames";
+					}
+				}
+				break;
+			
+			case "unignore":
+				// TODO: /unignore
+				break;
+			
+			default:
+				if (this.isSquelched) {
+					response.text = "Sorry, you've been squelched and cannot talk in this world.";
+				}
+				else respond = false;
+		}
+		if (respond) this.send(response);
+		return respond;
 	};
 	
 	/**

@@ -10,12 +10,14 @@ Progress
 
 At the moment, Reentry Server only supports the most basic scenarios for interacting with the Atmosphere Community Server test client:
 
+* moving around a world
+* basic chat
 * `/avatar`
 * `/goto`
 * `/nick`
-* moving around a world
+* whispering
 
-That’s it. Chat messages aren’t even implemented yet.
+Sundry moderator slash-commands have been stubbed out but probably don’t work at all.
 
 Running Reentry Server
 ----------------------

@@ -3,7 +3,7 @@ Reentry Server
 
 [![Dependencies](https://david-dm.org/1ec5/reentry-server.png)](https://david-dm.org/1ec5/reentry-server)
 
-Years after the plug was pulled on [Atmosphere](http://www.adobe.com/products/atmosphere/) and its official chat server, the zombies are back! Witness 3D worlds come alive again with **Reentry Server**, a work-in-progress implementation of the **Yet Another Chat Protocol** (YACP) version 0.5. Powered by [Node.js](http://nodejs.org/), this modern rewrite of the open source Atmosphere Collaboration Server 7 will eventually make it easy for world builders to host their own chat rooms.
+Years after the plug was pulled on [Atmosphere](https://en.wikipedia.org/wiki/Adobe_Atmosphere) and its official chat server, the zombies are back! Witness 3D worlds come alive again with **Reentry Server**, a work-in-progress implementation of the **Yet Another Chat Protocol** (YACP) version 0.5. Powered by [Node.js](http://nodejs.org/), this modern rewrite of the open source Atmosphere Collaboration Server 7 will eventually make it easy for world builders to host their own chat rooms.
 
 Progress
 --------

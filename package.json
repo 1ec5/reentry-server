@@ -1,7 +1,7 @@
 {
 	"name": "reentry-server",
 	"description": "modern Atmosphere YACP server",
-	"version": "0.2.0pre",
+	"version": "0.1.1",
 	"keywords": ["yacp", "atmosphere", "atmo", "3d", "virtual reality", "chat"],
 	"author": "Minh Nguyen <mxn@1ec5.org> (http://www.1ec5.org/)",
 	"license": "MIT",

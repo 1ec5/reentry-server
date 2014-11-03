@@ -11,8 +11,17 @@
 		"url": "1ec5/reentry-server"
 	},
 	"bugs": "https://github.com/1ec5/reentry-server/issues",
-	"main": "./server.js",
-	"bin": "./server.js",
+	"main": "./lib/server.js",
+	"directories": {
+		"lib": "./lib"
+	},
+	"bin": {
+		"reentry-server": "./bin/yacpd.js",
+		"yacpd": "./bin/yacpd.js"
+	},
+	"engines": {
+		"node": "0.10.x"
+	},
 	"dependencies": {
 		"bufferpack": "ryanrolds/bufferpack",
 		"commander": "tj/commander.js",

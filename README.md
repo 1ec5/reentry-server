@@ -26,11 +26,8 @@ Getting started couldn’t be simpler:
 
 1. [Download and install Node.js](http://nodejs.org). Free and paid Node.js hosting is available from [a number of providers](https://github.com/joyent/node/wiki/Node-Hosting).
 1. [Download and unzip Reentry Server](https://github.com/1ec5/reentry-server/downloads) into a directory anywhere on the system.
-1. In a shell, go to that directory and execute the following commands on the command line:
-```bash
-npm link
-reentry-server
-```
+1. In a shell, go to that directory and run `npm install -g` to install Reentry Server globally.
+1. Start the server with either `yacpd` or `reentry-server`.
 
 Credit
 ------

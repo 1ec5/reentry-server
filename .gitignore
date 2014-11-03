@@ -1,4 +1,1 @@
-node_modules/bufferpack
-node_modules/commander
-node_modules/des
-node_modules/es6-shim
+node_modules/*

@@ -224,6 +224,9 @@ server.on("connection", function (socket) {
 	//* @see lsRemoteClientStruct.broadcast in RemoteClient.h
 	socket.broadcastMode = socket.BROADCAST_MODE_NONE;
 	
+	//* @see lsRemoteClientStruct.heard in lsRemoteClient.h
+	socket.heardCurrentSaying = false;
+	
 	//* @see lsRemoteClientStruct.ignores in RemoteClient.h
 	socket.ignoredIds = new Set();
 	
@@ -234,7 +237,8 @@ server.on("connection", function (socket) {
 	socket.observers = [];
 	socket.dirtyObservers = [];
 	
-	socket.observingGroups = [];
+	//* @see lsRemoteClientStruct.observingGroups in lsRemoteClient.h
+	socket.observingGroupsById = new Map();
 	
 	/**
 	 * @see lsConnectionStruct.lastRecvTime in lsConnection.h
@@ -341,7 +345,14 @@ server.on("connection", function (socket) {
 			for (var i = 0; i < packetOffset; i++) {
 				packetData[i] = decryptByte(packetData[i]);
 			}
-			var msgSize = parseInt(bufferpack.unpack(fmt, packetData), 10);
+			var msgSize;
+			try {
+				msgSize = parseInt(bufferpack.unpack(fmt, packetData), 10);
+			}
+			catch (exc) {
+				this.die(types.errors.general, 0, exc);
+				return;
+			}
 			
 			// Decrypt the rest of the message.
 			for (var i = packetOffset; i < packetOffset + msgSize; i++) {
@@ -351,11 +362,18 @@ server.on("connection", function (socket) {
 			
 			// Determine the message type.
 			fmt = "<l";
-			var typeId = bufferpack.unpack(fmt, packetData, packetOffset);
+			var typeId;
+			try {
+				typeId = bufferpack.unpack(fmt, packetData, packetOffset);
+			}
+			catch (exc) {
+				this.die(types.errors.general, 0, exc);
+				return;
+			}
 			packetOffset += bufferpack.calcLength(fmt);
 			if (!(typeId in types.types)) {
-				socket.die(types.errors.general, typeId,
-						   "Unknown message type #" + typeId + ".");
+				this.die(types.errors.general, typeId,
+						 "Unknown message type #" + typeId + ".");
 				return;
 			}
 			var type = types.types[typeId];
@@ -365,7 +383,13 @@ server.on("connection", function (socket) {
 			// Unpack the rest of the message.
 			packetOffset += bufferpack.calcLength("x");
 			var struct = new type();
-			packetOffset += struct.unpack(packetData.slice(packetOffset)).length;
+			try {
+				packetOffset += struct.unpack(packetData.slice(packetOffset)).length;
+			}
+			catch (exc) {
+				this.die(types.errors.general, 0, exc);
+				return;
+			}
 			console.log(struct);
 			
 			// Check sanity.
@@ -385,7 +409,10 @@ server.on("connection", function (socket) {
 			}
 			
 			// Handle the message.
-			socket.emit(type.name, struct);
+			if (!socket.emit(type.name, struct)) {
+				socket.die(types.errors.general, 0,
+						   "No handler for message type “" + type.name + "”.");
+			}
 			
 			socket.markLastReceivedTime();
 		}
@@ -606,9 +633,7 @@ server.on("connection", function (socket) {
 	 * @see lsRemoteClient_ObGroupDelObserver() in lsRemoteClient.c
 	 */
 	socket.on("ObGroupDelObserver1", function (deletion) {
-		var observingGroup = this.observingGroups.find(function (group, idx, arr) {
-			return group.id === deletion.gid;
-		});
+		var observingGroup = this.observingGroupsById.get(deletion.gid);
 		if (!observingGroup) {
 			// TODO: Log the incident.
 			socket.die(types.errors.objectGroupObserverDeletion, deletion.gid,
@@ -724,7 +749,18 @@ server.on("connection", function (socket) {
 			this.die(types.errors.objectSaying, saying.fromId,
 					 "Attempted to speak for an object you do not own.");
 		}
-		this.onModeratorCommand(saying);
+		if (this.onModeratorCommand(saying)) return;
+		
+		if (this.broadcastMode) {
+			// BroadcastSay() in lsWorld.c
+			speaker.worldInstance.world.server.send(new types.Broadcast1({
+				clientIdent: speaker.proxy.clientIdent,
+				worldName: speaker.worldInstance.world.worldName,
+				info: ("SAY:" + saying.text).substr(0, 1030),
+				oid: speaker.oid,
+			}));
+		}
+		speaker.say(saying);
 	});
 	
 	/**
@@ -1030,7 +1066,36 @@ server.on("connection", function (socket) {
 				break;
 			
 			case "unignore":
-				// TODO: /unignore
+				var userId = parseInt(body);
+				if (Number.isNaN(userId)) {
+					response.text = "Usage: /unignore userID  " +
+						"To see userIDs listed with nicknames type /showid.";
+				}
+				else {
+					var modSocket = this.moderatorSockets[userId];
+					if (modSocket) {
+						this.ignoredIds.delete(modSocket.clientIdent);
+						var dirtyObserver = this.observers.find(function (observer, idx, observers) {
+							return this.object.id === userId;
+						});
+						if (dirtyObserver) {
+							dirtyObserver.markAsDirty(objectobserver.dirtyAttrsAvatar);
+							dirtyObserver.markAsDirty(objectobserver.dirtyAttrsNickname);
+						}
+						var unignoredSocket = server.getObjectByClientIdent(modSocket.clientIdent);
+						if (unignoredSocket && unignoredSocket.nickname) {
+							response.text = "You've unignored " +
+								unignoredSocket.nickname + " (" + userId + ").";
+						}
+						else {
+							response.text = "userID " + userId + " has been unignored.";
+						}
+					}
+					else {
+						response.text = "Couldn't find userID " + userId +
+							".Type /showid to see userIDs listed along with nicknames";
+					}
+				}
 				break;
 			
 			default:
@@ -1041,6 +1106,14 @@ server.on("connection", function (socket) {
 		}
 		if (respond) this.send(response);
 		return respond;
+	};
+	
+	/**
+	 * @see lsObHearSayClient() in lsOb.c
+	 */
+	socket.hear = function (saying, clientIdent) {
+		if (!saying.target) this.send(new types.Say1(saying));
+		if (!this.ignoredIds.has(clientIdent)) this.send(saying);
 	};
 	
 	/**
